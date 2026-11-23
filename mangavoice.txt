@@ -1,0 +1,232 @@
+MANGAVOICE AI - SEMUA KODE (salin satu per satu)
+Format: tiap bagian diawali '===== FILE: <path> ====='. Buat file dengan path itu di GitHub, tempel isi sampai sebelum garis '=====' berikutnya.
+
+===== FILE: package.json =====
+{"name":"mangavoice-ai","private":true,"scripts":{"dev":"next dev","build":"next build","start":"next start"},
+"dependencies":{"next":"^15","react":"^19","react-dom":"^19","@supabase/supabase-js":"^2","@anthropic-ai/sdk":"latest","openai":"^4","jszip":"^3","framer-motion":"^11","tailwindcss":"^3"},
+"devDependencies":{"typescript":"^5","postcss":"^8","autoprefixer":"^10","@types/node":"^20","@types/react":"^19"}}
+
+===== FILE: tsconfig.json =====
+{"compilerOptions":{"target":"es2020","lib":["dom","esnext"],"jsx":"preserve","module":"esnext","moduleResolution":"bundler","strict":true,"skipLibCheck":true,"noEmit":true,"esModuleInterop":true,"resolveJsonModule":true,"isolatedModules":true,"incremental":true,"plugins":[{"name":"next"}],"paths":{"@/*":["./*"]}},"include":["next-env.d.ts","**/*.ts","**/*.tsx"]}
+
+===== FILE: tailwind.config.ts =====
+export default{content:['./app/**/*.{ts,tsx}'],theme:{extend:{}},plugins:[]};
+
+===== FILE: postcss.config.js =====
+module.exports={plugins:{tailwindcss:{},autoprefixer:{}}};
+
+===== FILE: .env.example =====
+# Hanya dua key ini yang wajib. Dibaca di server saja.
+ANTHROPIC_API_KEY=   # OCR + panel + karakter + emosi + terjemahan
+OPENAI_API_KEY=      # TTS suara
+# Supabase opsional (belum dipakai di kode saat ini)
+
+===== FILE: app/globals.css =====
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+===== FILE: app/layout.tsx =====
+import './globals.css';
+export const metadata={title:'MangaVoice AI'};
+export default function L({children}:{children:React.ReactNode}){return<html lang="id"><body className="bg-zinc-950 text-zinc-100 antialiased">{children}</body></html>}
+
+===== FILE: app/page.tsx =====
+'use client';
+import {useEffect,useRef,useState} from 'react';
+const VOICES=['alloy','ash','ballad','coral','echo','fable','nova','onyx','sage','shimmer'];
+type Item={type:string;speaker:string|null;text:string;translated?:string|null;emotion:string};
+type Panel={order:number;bbox:number[];items:Item[]};
+const post=async(u:string,b:any)=>{const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});const j=await r.json();if(!r.ok)throw new Error(j.error||j.status||'Error '+r.status);return j};
+const hash=(s:string)=>[...s].reduce((h,c)=>(h*31+c.charCodeAt(0))>>>0,0);
+export default function Home(){
+  const[url,setUrl]=useState('');const[d,setD]=useState<any>(null);const[err,setErr]=useState('');const[busy,setBusy]=useState('');
+  const[an,setAn]=useState<Record<number,{panels:Panel[]}>>({});const[vm,setVm]=useState<Record<string,string>>({});
+  const[cfg,setCfg]=useState({speed:1,sfx:false,autoNext:true,lang:'original',dir:'auto',narr:'both'});
+  const[pos,setPos]=useState({p:0,k:-1});const[sub,setSub]=useState('');const[playing,setPlaying]=useState(false);
+  const tok=useRef(0),au=useRef<HTMLAudioElement|null>(null),anR=useRef(an),vmR=useRef(vm),cfgR=useRef(cfg);
+  anR.current=an;vmR.current=vm;cfgR.current=cfg;
+  const mid=d?.info?.id;
+  useEffect(()=>{if(!mid)return;try{setVm(JSON.parse(localStorage.getItem('mv_vm_'+mid)||'{}'))}catch{}},[mid]);
+  useEffect(()=>{if(mid)try{localStorage.setItem('mv_vm_'+mid,JSON.stringify(vm))}catch{}},[vm,mid]);
+  const voiceFor=(sp:string|null)=>{const k=sp||'Narator';if(vmR.current[k])return vmR.current[k];const v=sp?VOICES[hash(sp)%VOICES.length]:'onyx';
+    vmR.current={...vmR.current,[k]:v};setVm(vmR.current);return v};
+  async function open(u:string){setBusy('Mendeteksi sumber…');setErr('');
+    try{const j=await post('/api/detect',{url:u});anR.current={};setAn({});setD(j);setPos({p:0,k:-1});return j}
+    catch(e:any){setErr(e.message);return null}finally{setBusy('')}}
+  async function analyze(dd:any,p:number){if(anR.current[p])return anR.current[p];
+    const r=await post('/api/analyze',{chapterId:dd.selected,page:p,...(dd.pages[p].startsWith('data:')?{imageData:dd.pages[p]}:{imageUrl:dd.pages[p]}),direction:cfgR.current.dir,targetLang:cfgR.current.lang});
+    anR.current={...anR.current,[p]:r};setAn(anR.current);return r}
+  const speak=async(text:string,voice:string,emotion:string)=>{const r=await fetch('/api/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,voice,emotion,speed:cfgR.current.speed})});
+    if(!r.ok){const j=await r.json().catch(()=>({}));throw new Error(j.error||'TTS gagal')}
+    const u=URL.createObjectURL(await r.blob());await new Promise<void>(res=>{const a=new Audio(u);au.current=a;a.onended=()=>res();a.onerror=()=>res();a.play().catch(()=>res())});URL.revokeObjectURL(u)};
+  async function upload(fs:FileList|null){if(!fs||!fs.length)return;pause();setErr('');setBusy('Memuat file…');
+    try{const JSZip=(await import('jszip')).default;const bl:{name:string;b:Blob}[]=[];
+      for(const f of Array.from(fs)){if(/\.(cbz|zip)$/i.test(f.name)){const z=await JSZip.loadAsync(f);
+        for(const e of Object.values(z.files))if(!e.dir&&/\.(jpe?g|png|webp)$/i.test(e.name))bl.push({name:e.name,b:await e.async('blob')})}
+        else if(f.type.startsWith('image/'))bl.push({name:f.name,b:f})}
+      if(!bl.length)throw new Error('Tidak ada gambar valid. CBR belum didukung, ubah ke CBZ.');
+      bl.sort((x,y)=>x.name.localeCompare(y.name,undefined,{numeric:true}));
+      const pages:string[]=[];for(const{b}of bl){const bm=await createImageBitmap(b);const k=Math.min(1,1400/bm.width);
+        const c=document.createElement('canvas');c.width=bm.width*k;c.height=bm.height*k;c.getContext('2d')!.drawImage(bm,0,0,c.width,c.height);pages.push(c.toDataURL('image/jpeg',.8))}
+      const id='up-'+Date.now();anR.current={};setAn({});setPos({p:0,k:-1});
+      setD({source:'upload',selected:id,pages,chapters:[],info:{id:'up-'+bl[0].name,title:'Upload lokal ('+pages.length+' hal.)',description:'File diproses di perangkat; hanya halaman yang dibaca dikirim ke API AI Anda.',genres:[],status:'upload'}})}
+    catch(e:any){setErr(e.message)}finally{setBusy('')}}
+  function focus(p:number,bb:number[]){const el=document.getElementById('pg'+p);if(el)window.scrollTo({top:el.offsetTop+bb[1]*el.offsetHeight-110,behavior:'smooth'})}
+  async function run(dd:any,start:number,my:number){
+    try{for(let p=start;p<dd.pages.length;p++){
+      setBusy(`OCR halaman ${p+1}/${dd.pages.length}…`);const r=await analyze(dd,p);setBusy('');
+      if(p+1<dd.pages.length)analyze(dd,p+1).catch(()=>{});
+      for(let k=0;k<r.panels.length;k++){if(my!==tok.current)return;
+        setPos({p,k});focus(p,r.panels[k].bbox);await new Promise(s=>setTimeout(s,500));
+        for(const it of r.panels[k].items){if(my!==tok.current)return;
+          if(it.type==='sfx'&&!cfgR.current.sfx)continue;
+          const t=(cfgR.current.lang!=='original'&&it.translated)||it.text;if(!t)continue;
+          setSub((it.speaker?it.speaker+': ':'')+t);
+          const v=cfgR.current.narr==='narr'||it.type==='narration'?voiceFor(null):voiceFor(it.speaker);
+          await speak(t,v,it.emotion);await new Promise(s=>setTimeout(s,250))}}}
+      // chapter selesai
+      if(my!==tok.current)return;
+      const i=dd.chapters.findIndex((c:any)=>c.id===dd.selected),nx=dd.chapters[i+1];
+      if(!cfgR.current.autoNext||!nx){setSub(nx?'Chapter selesai.':'Chapter selesai. Tidak ada chapter berikutnya.');setPlaying(false);return}
+      for(let s=5;s>0;s--){setSub(`Chapter selesai. Chapter ${nx.number} dalam ${s}s…`);await new Promise(r=>setTimeout(r,1000));if(my!==tok.current)return}
+      const nd=await open('https://mangadex.org/chapter/'+nx.id);window.scrollTo(0,0);if(nd&&my===tok.current)run(nd,0,my);else setPlaying(false);
+    }catch(e:any){setErr(e.message);setPlaying(false);setBusy('')}}
+  const play=()=>{if(!d?.pages?.length)return setErr('Pilih chapter dulu.');tok.current++;setPlaying(true);setErr('');run(d,pos.p,tok.current)};
+  const pause=()=>{tok.current++;au.current?.pause();setPlaying(false)};
+  const speakers=[...new Set<string>(Object.values(an).flatMap(a=>a.panels.flatMap(p=>p.items.map(i=>i.speaker||'')).filter(Boolean)))];
+  const sel='bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-sm';
+  return(<main className="max-w-2xl mx-auto px-4 pb-52 pt-6">
+    <h1 className="text-2xl font-bold">Manga<span className="bg-gradient-to-r from-violet-500 to-cyan-400 bg-clip-text text-transparent">Voice</span> AI</h1>
+    <div className="flex gap-2 mt-4"><input value={url} onChange={e=>setUrl(e.target.value)} placeholder="Tempel link MangaDex (judul/chapter)" className={sel+' flex-1'}/>
+      <button onClick={()=>open(url)} className="bg-violet-500 rounded-lg px-4 text-sm font-medium">Detect</button></div>
+    <label className="block mt-2 text-sm text-zinc-400">Atau upload gambar / .cbz: <input type="file" multiple accept="image/*,.cbz,.zip" onChange={e=>upload(e.target.files)} className="text-xs"/></label>
+    {busy&&<p className="text-cyan-400 text-sm mt-2">{busy}</p>}{err&&<p className="text-red-400 text-sm mt-2">{err}</p>}
+    {d&&<section className="mt-4 bg-zinc-900 border border-zinc-800 rounded-xl p-3 flex gap-3">
+      {d.info.cover&&<img src={d.info.cover} className="w-20 rounded-lg" alt=""/>}
+      <div className="text-sm"><b className="text-base">{d.info.title}</b><p className="text-zinc-400 line-clamp-3">{d.info.description}</p>
+        <p className="text-zinc-500 mt-1">{d.info.genres.slice(0,4).join(' · ')} · {d.info.status} · {d.chapters.length} ch</p>
+        <span className="text-xs text-cyan-400">Supported · {d.source}</span></div></section>}
+    {d&&<div className="grid grid-cols-2 gap-2 mt-3 text-sm">
+      <select className={sel+' col-span-2'} value={d.selected||''} onChange={e=>open('https://mangadex.org/chapter/'+e.target.value)}>
+        <option value="">Pilih chapter…</option>{d.chapters.map((c:any)=><option key={c.id} value={c.id}>Ch. {c.number} {c.title||''}</option>)}</select>
+      <select className={sel} value={cfg.lang} onChange={e=>setCfg({...cfg,lang:e.target.value})}><option value="original">Bahasa asli</option><option value="Indonesian">Indonesia</option><option value="English">English</option></select>
+      <select className={sel} value={cfg.dir} onChange={e=>setCfg({...cfg,dir:e.target.value})}><option value="auto">Arah: Auto</option><option value="rtl">Right to Left</option><option value="ltr">Left to Right</option><option value="ttb">Top to Bottom</option></select>
+      <select className={sel} value={cfg.narr} onChange={e=>setCfg({...cfg,narr:e.target.value})}><option value="both">Narator + Karakter</option><option value="narr">Narator saja</option></select>
+      <label className="flex items-center gap-2">Speed {cfg.speed}x<input type="range" min=".5" max="2" step=".1" value={cfg.speed} onChange={e=>setCfg({...cfg,speed:+e.target.value})} className="flex-1 accent-violet-500"/></label>
+      <label><input type="checkbox" checked={cfg.sfx} onChange={e=>setCfg({...cfg,sfx:e.target.checked})}/> Baca SFX</label>
+      <label><input type="checkbox" checked={cfg.autoNext} onChange={e=>setCfg({...cfg,autoNext:e.target.checked})}/> Auto next chapter</label></div>}
+    {speakers.length>0&&<details className="mt-3 bg-zinc-900 border border-zinc-800 rounded-xl p-3 text-sm" open><summary>Voice Studio · suara per karakter (tersimpan)</summary>
+      {['Narator',...speakers].map(s=><div key={s} className="flex justify-between items-center mt-2">{s}
+        <select className={sel} value={vm[s]||voiceFor(s==='Narator'?null:s)} onChange={e=>setVm({...vm,[s]:e.target.value})}>{VOICES.map(v=><option key={v}>{v}</option>)}</select></div>)}
+      <button className="mt-3 text-xs text-zinc-400" onClick={()=>setVm({})}>Reset voice</button></details>}
+    <div className="mt-4">{d?.pages?.map((u:string,i:number)=><div key={u} id={'pg'+i} className="relative mb-3">
+      <img src={u} className="w-full rounded-lg" loading="lazy" alt={'Halaman '+(i+1)}/>
+      {pos.p===i&&pos.k>=0&&an[i]?.panels[pos.k]&&(()=>{const b=an[i].panels[pos.k].bbox;return<div className="absolute border-2 border-cyan-400 rounded shadow-[0_0_0_9999px_rgba(0,0,0,.45)] transition-all duration-500 pointer-events-none" style={{left:b[0]*100+'%',top:b[1]*100+'%',width:b[2]*100+'%',height:b[3]*100+'%'}}/>})()}</div>)}</div>
+    <div className="fixed inset-x-0 bottom-0 bg-zinc-950/95 backdrop-blur border-t border-zinc-800 p-3 pb-[max(.75rem,env(safe-area-inset-bottom))]">
+      <div className="max-w-2xl mx-auto"><div className="min-h-10 text-center text-sm bg-zinc-900 rounded-lg p-2">{sub||'Subtitle muncul di sini'}</div>
+        <div className="h-1 bg-zinc-800 rounded mt-2"><div className="h-full bg-gradient-to-r from-violet-500 to-cyan-400 rounded" style={{width:d?.pages?.length?(pos.p+1)/d.pages.length*100+'%':0}}/></div>
+        <div className="flex justify-center gap-2 mt-2"><button className="bg-zinc-800 rounded-lg px-4 py-2" onClick={()=>{pause();setPos({p:Math.max(0,pos.p-1),k:-1})}}>⏮</button>
+          <button className="bg-violet-500 rounded-lg px-6 py-2 font-medium" onClick={playing?pause:play}>{playing?'⏸ Pause':'▶ Play'}</button>
+          <button className="bg-zinc-800 rounded-lg px-4 py-2" onClick={()=>{pause();setPos({p:Math.min((d?.pages?.length||1)-1,pos.p+1),k:-1})}}>⏭</button></div></div></div>
+  </main>)}
+
+===== FILE: app/api/detect/route.ts =====
+import {NextRequest,NextResponse} from 'next/server';
+import {parseUrl,mangaInfo,chapters,pageUrls} from '@/lib/sources';
+export async function POST(req:NextRequest){
+  const{url}=await req.json(); const p:any=parseUrl(url);
+  if(p.status!=='supported')return NextResponse.json(p,{status:422});
+  try{
+    let mangaId=p.mangaId;
+    if(!mangaId&&p.chapterId){const r=await(await fetch(`https://api.mangadex.org/chapter/${p.chapterId}`)).json();
+      mangaId=r.data.relationships.find((x:any)=>x.type==='manga').id}
+    const[info,chs]=await Promise.all([mangaInfo(mangaId),chapters(mangaId)]);
+    const pages=p.chapterId?await pageUrls(p.chapterId):[];
+    return NextResponse.json({status:'supported',source:p.source,info,chapters:chs,selected:p.chapterId,pages});
+  }catch(e:any){return NextResponse.json({status:'connection_error',error:e.message+'. Coba lagi atau pakai upload.'},{status:502})}
+}
+
+===== FILE: app/api/analyze/route.ts =====
+import {NextRequest,NextResponse} from 'next/server';
+import Anthropic from '@anthropic-ai/sdk';
+const ai=new Anthropic(); // ANTHROPIC_API_KEY (server only)
+const cache=new Map<string,any>(); // cache memori; ganti ke Supabase bila perlu persisten
+const EMO=['happy','sad','angry','whispering','surprised','confident','scared','serious','excited','sarcastic','crying','calm'];
+export const maxDuration=60;
+export async function POST(req:NextRequest){
+  const{chapterId,page,imageUrl,imageData,direction='auto',targetLang='original'}=await req.json();
+  const key=`${chapterId}|${page}|${targetLang}|${direction}`;
+  if(cache.has(key))return NextResponse.json({...cache.get(key),cached:true});
+  try{
+    let b64:string,mt:string;
+    if(imageData){const m=/^data:(.+?);base64,(.*)$/.exec(imageData);if(!m)throw new Error('Format gambar upload tidak valid.');mt=m[1];b64=m[2]}
+    else{const img=await fetch(imageUrl);if(!img.ok)throw new Error('Gambar tidak dapat diambil (missing image).');
+      b64=Buffer.from(await img.arrayBuffer()).toString('base64');mt=img.headers.get('content-type')||'image/jpeg'}
+    const m=await ai.messages.create({model:'claude-sonnet-4-6',max_tokens:4000,
+      system:'Kamu mesin OCR & analisis halaman manga. Balas HANYA JSON valid, tanpa teks lain.',
+      messages:[{role:'user',content:[{type:'image',source:{type:'base64',media_type:mt as any,data:b64}},{type:'text',text:
+`Arah baca: ${direction} (auto = tebak dari layout; manga Jepang kanan-ke-kiri, webtoon atas-ke-bawah).
+Bahasa target teks: ${targetLang} (original = jangan terjemahkan).
+Skema: {"direction":"rtl|ltr|ttb","panels":[{"order":1,"bbox":[x,y,w,h],"items":[{"type":"dialogue|narration|sfx","speaker":"nama konsisten atau null","text":"asli","translated":"atau null","emotion":"${EMO.join('|')}"}]}]}
+bbox = fraksi 0-1 dari lebar/tinggi gambar. Urutkan panels dan items sesuai urutan baca. Jika ragu pembicara, speaker=null. Halaman tanpa teks: items kosong.`}]}]});
+    const result=JSON.parse((m.content[0] as any).text.replace(/```json|```/g,'').trim());
+    cache.set(key,result);return NextResponse.json(result);
+  }catch(e:any){return NextResponse.json({error:'OCR/analisis gagal: '+e.message},{status:500})}
+}
+
+===== FILE: app/api/tts/route.ts =====
+import {NextRequest,NextResponse} from 'next/server';
+import OpenAI from 'openai';
+import {createHash} from 'crypto';
+const oa=new OpenAI(); // OPENAI_API_KEY (server only)
+const cache=new Map<string,Buffer>();
+const VOICES=['alloy','ash','ballad','coral','echo','fable','nova','onyx','sage','shimmer'];
+const STYLE:Record<string,string>={happy:'cheerful',sad:'sorrowful, slow',angry:'angry, sharp',whispering:'whispering softly',surprised:'startled',confident:'confident',scared:'trembling, fearful',serious:'serious, low',excited:'excited, fast',sarcastic:'sarcastic',crying:'crying, voice breaking',calm:'calm, even'};
+export async function POST(req:NextRequest){
+  const{text,voice='alloy',emotion='calm',speed=1}=await req.json();
+  if(!text||!VOICES.includes(voice))return NextResponse.json({error:'Parameter TTS tidak valid.'},{status:400});
+  const h=createHash('sha256').update([text,voice,emotion,speed].join('|')).digest('hex');
+  let buf=cache.get(h);
+  try{
+    if(!buf){const r=await oa.audio.speech.create({model:'gpt-4o-mini-tts',voice,input:text,
+      speed:Math.min(4,Math.max(0.25,speed)),instructions:`Baca seperti aktor suara anime. Gaya: ${STYLE[emotion]||'natural'}.`} as any);
+      buf=Buffer.from(await r.arrayBuffer());if(cache.size>300)cache.delete(cache.keys().next().value!);cache.set(h,buf)}
+    return new NextResponse(buf,{headers:{'Content-Type':'audio/mpeg'}});
+  }catch(e:any){return NextResponse.json({error:'TTS gagal: '+e.message},{status:502})}
+}
+
+===== FILE: lib/sources.ts =====
+// Adapter per sumber. Hanya sumber ber-API resmi; tidak ada bypass proteksi.
+export type Status = 'supported'|'login_required'|'unsupported'|'connection_error';
+const UUID='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+const API='https://api.mangadex.org';
+export function parseUrl(raw:string){
+  let u:URL; try{u=new URL(raw)}catch{return{status:'unsupported' as Status,error:'URL tidak valid.'}}
+  if(/(^|\.)mangadex\.org$/.test(u.hostname)){
+    const t=u.pathname.match(new RegExp(`/title/(${UUID})`)),c=u.pathname.match(new RegExp(`/chapter/(${UUID})`));
+    if(t||c)return{status:'supported' as Status,source:'mangadex',mangaId:t?.[1],chapterId:c?.[1]};
+  }
+  return{status:'unsupported' as Status,error:`Domain ${u.hostname} belum punya adapter. Gunakan upload gambar/CBZ.`};
+}
+const j=async(p:string)=>{const r=await fetch(API+p,{headers:{'User-Agent':'MangaVoiceAI/1.0'}});if(!r.ok)throw new Error('MangaDex '+r.status);return r.json()};
+export async function mangaInfo(id:string){
+  const{data:m}=await j(`/manga/${id}?includes[]=cover_art`);
+  const cover=m.relationships.find((r:any)=>r.type==='cover_art')?.attributes?.fileName;
+  const a=m.attributes;
+  return{id,title:a.title.en||Object.values(a.title)[0],description:a.description?.en||'',status:a.status,
+    genres:a.tags.map((t:any)=>t.attributes.name.en),cover:cover&&`https://uploads.mangadex.org/covers/${id}/${cover}.256.jpg`,lastChapter:a.lastChapter};
+}
+export async function chapters(id:string,lang='en'){
+  const out:any[]=[];
+  for(let o=0;;o+=500){const r=await j(`/manga/${id}/feed?translatedLanguage[]=${lang}&order[chapter]=asc&limit=500&offset=${o}`);
+    out.push(...r.data);if(o+500>=r.total)break}
+  const seen=new Set<string>();
+  return out.filter(c=>c.attributes.chapter&&c.attributes.pages>0).map(c=>({id:c.id,number:parseFloat(c.attributes.chapter),title:c.attributes.title}))
+    .sort((a,b)=>a.number-b.number).filter(c=>!seen.has(c.number+'')&&seen.add(c.number+''));
+}
+export async function pageUrls(chapterId:string){
+  const r=await j(`/at-home/server/${chapterId}`);
+  return r.chapter.data.map((f:string)=>`${r.baseUrl}/data/${r.chapter.hash}/${f}`);
+}
+
