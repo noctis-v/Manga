@@ -1,0 +1,5 @@
+app/api/tts/route.ts
+===== FILE: package.json =====
+{"name":"mangavoice-ai","private":true,"scripts":{"dev":"next dev","build":"next build","start":"next start"},
+"dependencies":{"next":"^15","react":"^19","react-dom":"^19","@supabase/supabase-js":"^2","@anthropic-ai/sdk":"latest","openai":"^4","jszip":"^3","framer-motion":"^11","tailwindcss":"^3"},
+"devDependencies":{"typescript":"^5","postcss":"^8","autoprefixer":"^10","@types/node":"^20","@types/react":"^19"}}
